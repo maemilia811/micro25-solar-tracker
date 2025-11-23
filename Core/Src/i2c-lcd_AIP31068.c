@@ -1,0 +1,185 @@
+
+/** Put this in the src folder **/
+
+#include "i2c-lcd_AIP31068.h"
+#include <string.h>
+
+#define LCD_I2C_ADDRESS       0x7C // change this according to ur setup
+#define RGB_I2C_ADDRESS       0xC4 // 8-bit address (shifted left), 0x62 for 7-bit
+
+// CMD
+#define LCD_DISPLAYCONTROL      0x08
+// DISPLAY CONTROL
+#define LCD_DISPLAYON           0x04
+#define LCD_DISPLAYOFF          0x00
+#define LCD_CURSORON            0x02
+#define LCD_CURSOROFF           0x00
+#define LCD_BLINKON             0x01
+#define LCD_BLINKOFF            0x00
+
+
+/////////// Private variables ///////////////
+static uint8_t DisplayCtrl = 0;
+I2C_HandleTypeDef *lcd_hi2c;
+
+/////////// Private functions ///////////////
+void GROVE_LCD_send_cmd (uint8_t cmd);  					// send command to the lcd
+void GROVE_LCD_send_data (uint8_t data);  					// send data to the lcd
+void GROVE_LCD_setRegBacklight(uint8_t reg, uint8_t data); 	// set reg data to the backlight controller
+
+
+//////// Functions Implementation ///////////
+void lcd_write_data_chunk(I2C_HandleTypeDef *hi2c, const uint8_t *data, uint16_t len) {
+    /* Limitar chunk a un tamaño razonable (p.ej. 16 o 32). Ajusta según RAM. */
+    uint8_t tx[32 + 1];
+    tx[0] = 0x40;
+    memcpy(&tx[1], data, len);
+    HAL_I2C_Master_Transmit(hi2c, 0x7C, tx, len + 1, 100);
+}
+
+/* Set cursor: col (0..), row (0..3) */
+void lcd_set_cursor(I2C_HandleTypeDef *hi2c, uint8_t col, uint8_t row) {
+    /* Offsets typical HD44780 for 16x2/20x4 */
+    const uint8_t row_offsets[] = {0x00, 0x40, 0x14, 0x54};
+    if (row > 3) row = 3;
+    uint8_t addr = (uint8_t)(0x80 | (col + row_offsets[row])); /* 0x80 = SET DDRAM ADDR command */
+    uint8_t buf[2] = {0x80,addr};
+    HAL_I2C_Master_Transmit(hi2c, 0x7C, buf, sizeof(buf),100);
+}
+
+void GROVE_LCD_send_cmd (uint8_t cmd){
+
+	uint8_t command[2];
+
+	command[0] = 0x00;  // control byte RS=0
+	command[1] = cmd;  	// data byte
+	HAL_I2C_Master_Transmit (lcd_hi2c, LCD_I2C_ADDRESS, command, 2, 100);
+}
+
+void GROVE_LCD_send_data (uint8_t data){
+
+	uint8_t data_t[2];
+
+	data_t[0] = 0x40;	//	control byte RS=1
+	data_t[1] = data;
+	HAL_I2C_Master_Transmit (lcd_hi2c, LCD_I2C_ADDRESS, data_t, 2, 100);
+}
+
+// Set RGB Backlight
+void GROVE_LCD_setRegBacklight(uint8_t reg, uint8_t data){
+
+	uint8_t buf[2] = {reg, data};
+
+    HAL_I2C_Master_Transmit(lcd_hi2c, RGB_I2C_ADDRESS, buf, 2, 100);
+}
+
+
+//=======================================================================================
+void GROVE_LCD_Init(I2C_HandleTypeDef *hi2c){
+
+	lcd_hi2c = hi2c;
+	HAL_Delay(20);       // wait for >20ms
+
+	// Display initialization
+	GROVE_LCD_send_cmd(0x38); // Function set --> (D4)DL=1 (8 bit mode), (D3)N = 1 (2 line display), (D2)F = 0 (5x8 characters)
+	HAL_Delay(1);
+	GROVE_LCD_send_cmd(0x08); //Display on/off control --> D=0 display off,C=0 cursor off, B=0 Blinking off
+	HAL_Delay(1);
+	GROVE_LCD_send_cmd(0x01); // clear display
+	HAL_Delay(2);
+	GROVE_LCD_send_cmd(0x06); //Entry mode set --> I/D = 1 (increment cursor) & S = 0 (no shift)
+	HAL_Delay(1);
+	GROVE_LCD_send_cmd(0x0C); //Display on/off control --> D = 1 display on, C and B = 0. (Cursor and blink, last two bits)
+
+	HAL_Delay(1); // Wait for LCD to power up
+
+	// Set RGB backlight to white
+	GROVE_LCD_setBacklightRGB(255, 255, 255);
+
+}
+
+void GROVE_LCD_Clear(void){
+
+	GROVE_LCD_send_cmd(0x01);
+	HAL_Delay(2);
+}
+
+void GROVE_LCD_Home(void){
+
+	GROVE_LCD_send_cmd(0x02);
+	HAL_Delay(2);
+}
+
+void GROVE_LCD_SetCursor(uint8_t col, uint8_t row){
+
+    switch(row){
+        case 0:
+            col |= 0x80;
+            break;
+        case 1:
+            col |= 0xC0;
+            break;
+    }
+
+    GROVE_LCD_send_cmd(col);
+}
+
+void GROVE_LCD_WriteChar(char Ch){
+
+	GROVE_LCD_send_data (Ch);
+}
+
+void GROVE_LCD_WriteString(char* Str)
+{
+	while (*Str) GROVE_LCD_send_data (*Str++);
+}
+
+void GROVE_LCD_DisplayON(void)
+{
+	DisplayCtrl |= LCD_DISPLAYON;
+	GROVE_LCD_send_cmd (LCD_DISPLAYCONTROL | DisplayCtrl); //Display control --> D=1 display on.
+}
+
+void GROVE_LCD_DisplayOFF(void)
+{
+	DisplayCtrl &= ~LCD_DISPLAYON;
+	GROVE_LCD_send_cmd (LCD_DISPLAYCONTROL | DisplayCtrl); //Display control --> D=0 display off.
+}
+
+void GROVE_LCD_CursorON(void)
+{
+	DisplayCtrl |= LCD_CURSORON;
+	GROVE_LCD_send_cmd (LCD_DISPLAYCONTROL | DisplayCtrl); //Display control --> C=1 cursor on.
+}
+
+void GROVE_LCD_CursorOFF(void)
+{
+	DisplayCtrl &= ~LCD_CURSORON;
+	GROVE_LCD_send_cmd (LCD_DISPLAYCONTROL | DisplayCtrl); //Display control --> C=0 cursor off.
+}
+
+void GROVE_LCD_BlinkON(void)
+{
+	DisplayCtrl |= LCD_BLINKON;
+	GROVE_LCD_send_cmd (LCD_DISPLAYCONTROL | DisplayCtrl); //Display control --> B=1 blinking on.
+}
+
+void GROVE_LCD_BlinkOFF(void)
+{
+	DisplayCtrl &= ~LCD_BLINKON;
+	GROVE_LCD_send_cmd (LCD_DISPLAYCONTROL | DisplayCtrl); //Display control --> B=0 blinking off.
+}
+
+//=======================================================================================
+
+void GROVE_LCD_setBacklightRGB(uint8_t r, uint8_t g, uint8_t b) {
+
+	HAL_Delay(1);
+	GROVE_LCD_setRegBacklight(0x00, 0x00);
+	GROVE_LCD_setRegBacklight(0x01, 0x00);
+	GROVE_LCD_setRegBacklight(0x08, 0xAA);
+	GROVE_LCD_setRegBacklight(0x04, r);
+	GROVE_LCD_setRegBacklight(0x03, g);
+	GROVE_LCD_setRegBacklight(0x02, b);
+}
+//=======================================================================================
