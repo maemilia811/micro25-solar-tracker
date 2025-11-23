@@ -140,7 +140,6 @@ int main(void)
  char * word = "Initializing";
  int8_t counter = 0;
  GROVE_LCD_WriteString(word);
- Empty_Line(0);
  HAL_Delay(10);
 while (1)
   {
